@@ -50,6 +50,9 @@ type SipStackConfig struct {
 	MsgMapper         sip.MessageMapper
 	ServerAuthManager ServerAuthManager
 	UserAgent         string
+	// PacketConn if is not nil then this connection will be used
+	// instead of creation of the new one.
+	PacketConn net.PacketConn
 }
 
 // SipStack a golang SIP Stack
@@ -153,25 +156,30 @@ func (s *SipStack) Log() log.Logger {
 }
 
 // ListenTLS starts serving listeners on the provided address
-func (s *SipStack) ListenTLS(protocol string, listenAddr string, options *transport.TLSConfig) error {
-	var err error
+func (s *SipStack) ListenTLS(protocol string, listenAddr string, tlsConfig *transport.TLSConfig) error {
+	options := []transport.ListenOption{
+		transport.WithPacketConn(s.config.PacketConn),
+	}
+	if tlsConfig != nil {
+		options = append(options, tlsConfig)
+	}
+
 	network := strings.ToUpper(protocol)
-	if options != nil {
-		err = s.tp.Listen(network, listenAddr, options)
-	} else {
-		err = s.tp.Listen(network, listenAddr)
+	err := s.tp.Listen(network, listenAddr, options...)
+	if err != nil {
+		return err
 	}
-	if err == nil {
-		target, err := transport.NewTargetFromAddr(listenAddr)
-		if err != nil {
-			return err
-		}
-		target = transport.FillTargetHostAndPort(network, target)
-		if _, ok := s.listenPorts[network]; !ok {
-			s.listenPorts[network] = target.Port
-		}
+
+	target, err := transport.NewTargetFromAddr(listenAddr)
+	if err != nil {
+		return err
 	}
-	return err
+	target = transport.FillTargetHostAndPort(network, target)
+	if _, ok := s.listenPorts[network]; !ok {
+		s.listenPorts[network] = target.Port
+	}
+
+	return nil
 }
 
 func (s *SipStack) Listen(protocol string, listenAddr string) error {

@@ -17,3 +17,5 @@ require (
 	golang.org/x/crypto v0.0.0-20210921155107-089bfa567519
 	google.golang.org/api v0.43.0
 )
+
+replace github.com/ghettovoice/gosip v0.0.0-20211014110559-f0c4b77a298b => github.com/sputnik-systems/gosip v0.0.0-20211116142508-6065b62e23b5
