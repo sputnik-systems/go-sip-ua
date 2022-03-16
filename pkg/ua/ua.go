@@ -510,18 +510,21 @@ func (ua *UserAgent) RequestWithContext(ctx context.Context, request sip.Request
 				case *transaction.TxTimeoutError:
 					//errs <- sip.NewRequestError(408, "Request Timeout", nil, nil)
 					return nil, err
-				}
-				request := (err.(*sip.RequestError)).Request
-				response := (err.(*sip.RequestError)).Response
-				callID, ok := request.CallID()
-				if ok {
-					branchID := utils.GetBranchID(request)
-					if v, found := ua.iss.Load(NewSessionKey(*callID, branchID)); found {
-						is := v.(*session.Session)
-						ua.iss.Delete(NewSessionKey(*callID, branchID))
-						is.SetState(session.Failure)
-						ua.handleInviteState(is, &request, &response, session.Failure, nil)
+				case *sip.RequestError:
+					request := (err.(*sip.RequestError)).Request
+					response := (err.(*sip.RequestError)).Response
+					callID, ok := request.CallID()
+					if ok {
+						branchID := utils.GetBranchID(request)
+						if v, found := ua.iss.Load(NewSessionKey(*callID, branchID)); found {
+							is := v.(*session.Session)
+							ua.iss.Delete(NewSessionKey(*callID, branchID))
+							is.SetState(session.Failure)
+							ua.handleInviteState(is, &request, &response, session.Failure, nil)
+						}
 					}
+					return nil, err
+				default:
 				}
 				return nil, err
 			case response := <-responses:
