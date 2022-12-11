@@ -121,6 +121,10 @@ func (r *Register) SendRegister(expires uint32) error {
 					cexpiresint, _ := strconv.Atoi(cexpires.String())
 					expires = uint32(cexpiresint)
 				}
+
+				// Since send REGISTER request with local contact URI, we should extract
+				// valid (public) contact host&port from "200 OK (REGISTER)" response.
+				profile.ContactURI = hdrs[0].(*sip.ContactHeader).Address.Clone()
 			}
 		}
 		state := account.RegisterState{

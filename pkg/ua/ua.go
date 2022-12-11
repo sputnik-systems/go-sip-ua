@@ -105,6 +105,14 @@ func (ua *UserAgent) buildRequest(
 	callID *sip.CallID) (*sip.Request, error) {
 
 	builder := sip.NewRequestBuilder()
+	builder.AddVia(&sip.ViaHop{
+		ProtocolName:    "SIP",
+		ProtocolVersion: "2.0",
+		Transport:       "UDP",
+		Host:            from.Uri.Host(),
+		Port:            nil,
+		Params:          sip.NewParams().Add("rport", nil),
+	})
 
 	builder.SetMethod(method)
 	builder.SetFrom(from)
@@ -303,8 +311,12 @@ func (ua *UserAgent) handleInvite(request sip.Request, tx sip.ServerTransaction)
 				tx.Respond(response)
 			} else {
 				contactHdr, _ := request.Contact()
-				contactAddr := ua.updateContact2UAAddr(request.Transport(), contactHdr.Address)
-				contactHdr.Address = contactAddr
+				if toHdr, ok := request.To(); ok {
+					contactHdr.Address = toHdr.Address
+				} else {
+					contactAddr := ua.updateContact2UAAddr(request.Transport(), contactHdr.Address)
+					contactHdr.Address = contactAddr
+				}
 
 				is := session.NewInviteSession(ua.RequestWithContext, "UAS", contactHdr, request, *callID, transaction, session.Incoming, ua.Log())
 				ua.iss.Store(NewSessionKey(*callID, branchID), is)
@@ -461,9 +473,40 @@ func (ua *UserAgent) RequestWithContext(ctx context.Context, request sip.Request
 					return
 				}
 
-				// unauth request
+				// auth request
 				needAuth := (response.StatusCode() == 401 || response.StatusCode() == 407) && attempt < 2
 				if needAuth && authorizer != nil {
+
+					// Since the first time we send request with local contact URI, we should extract
+					// valid (public) host&port from Via response header parameters:
+					// host key	= "received"
+					// port key = "rport"
+					//
+					// Also we should update profile.ContactURI.
+					if viaHeader, ok := response.Via(); ok {
+						if len(viaHeader) > 0 {
+							viaHeaderParams := viaHeader[0].Params
+
+							contactHeader, _ := request.Contact()
+
+							if receivedIPAddress, ok := viaHeaderParams.Get("received"); ok {
+								contactHeader.Address.SetHost(receivedIPAddress.String())
+							}
+
+							if rport, ok := viaHeaderParams.Get("rport"); ok {
+								uintRPort, err := strconv.ParseUint(rport.String(), 10, 16)
+
+								// rport parsed successfully.
+								if err == nil {
+									var port = sip.Port(uint16(uintRPort))
+									contactHeader.Address.SetPort(&port)
+								}
+							}
+
+							request.ReplaceHeaders("Contact", []sip.Header{contactHeader})
+						}
+					}
+
 					if err := authorizer.AuthorizeRequest(request, response); err != nil {
 						errs <- err
 						return
