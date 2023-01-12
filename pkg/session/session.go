@@ -89,6 +89,10 @@ func (s *Session) RemoteURI() sip.Address {
 	return s.remoteURI
 }
 
+func (s *Session) UAType() string {
+	return s.uaType
+}
+
 func (s *Session) LocalSdp() string {
 	if s.uaType == "UAC" {
 		return s.offer
