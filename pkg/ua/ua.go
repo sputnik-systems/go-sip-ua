@@ -333,6 +333,7 @@ func (ua *UserAgent) handleInvite(request sip.Request, tx sip.ServerTransaction)
 	ua.Log().Debugf("handleInvite => %s, body => %s", request.Short(), request.Body())
 
 	callID, ok := request.CallID()
+	var localTag sip.MaybeString = nil
 	if ok {
 		var transaction sip.Transaction = tx.(sip.Transaction)
 		fromTag := utils.GetFromTag(request)
@@ -340,6 +341,7 @@ func (ua *UserAgent) handleInvite(request sip.Request, tx sip.ServerTransaction)
 		v, found := ua.iss.Load(NewSessionKey(*callID, fromTag, toTag))
 		if toHdr, ok := request.To(); ok && toHdr.Params.Has("tag") {
 			if found {
+				localTag = toTag
 				is := v.(*session.Session)
 				is.SetState(session.ReInviteReceived)
 				ua.handleInviteState(is, &request, nil, session.ReInviteReceived, &transaction)
@@ -365,6 +367,7 @@ func (ua *UserAgent) handleInvite(request sip.Request, tx sip.ServerTransaction)
 				is := session.NewInviteSession(ua.RequestWithContext, "UAS", contactHdr, request, *callID, transaction, session.Incoming, ua.Log())
 				if isToTag, ok := is.LocalURI().Params.Get("tag"); ok {
 					toTag = isToTag
+					localTag = toTag
 				}
 				ua.iss.Store(NewSessionKey(*callID, fromTag, toTag), is)
 				is.SetState(session.InviteReceived)
@@ -381,7 +384,10 @@ func (ua *UserAgent) handleInvite(request sip.Request, tx sip.ServerTransaction)
 			response := sip.NewResponseFromRequest(cancel.MessageID(), cancel, 200, "OK", "")
 			if callID, ok := response.CallID(); ok {
 				fromTag := utils.GetFromTag(cancel)
-				toTag := utils.GetToTag(cancel)
+
+				// Since invite session saved with valid fromTag and toTag and CANCEL contains only fromTag, extract toTag from created invite session.
+				toTag := localTag
+
 				if v, found := ua.iss.Load(NewSessionKey(*callID, fromTag, toTag)); found {
 					ua.iss.Delete(NewSessionKey(*callID, fromTag, toTag))
 					is := v.(*session.Session)

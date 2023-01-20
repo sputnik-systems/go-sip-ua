@@ -5,7 +5,7 @@ go 1.18
 require (
 	firebase.google.com/go v3.13.0+incompatible
 	github.com/c-bata/go-prompt v0.2.6
-	github.com/ghettovoice/gosip v0.0.0-20211014110559-f0c4b77a298b
+	github.com/ghettovoice/gosip v0.0.0-20230115141737-90e6c706484e
 	github.com/google/uuid v1.3.0
 	github.com/pixelbender/go-sdp v1.1.0
 	github.com/sirupsen/logrus v1.8.1
