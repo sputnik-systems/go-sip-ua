@@ -631,6 +631,9 @@ func (ua *UserAgent) RequestWithContext(ctx context.Context, request sip.Request
 					if ok {
 						fromTag := utils.GetFromTag(request)
 						toTag := utils.GetToTag(request)
+						if response != nil {
+							toTag = utils.GetToTag(response)
+						}
 						var inviteSession *session.Session
 						var isSessionFound = false
 
