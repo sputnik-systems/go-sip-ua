@@ -137,7 +137,7 @@ func NewB2BUA(disableAuth bool) *B2BUA {
 				}
 
 				offer := sess.RemoteSdp()
-				dest, err := ua.Invite(profile, called, recipient, &offer)
+				dest, err := ua.Invite(profile, called, recipient, &offer, nil)
 				if err != nil {
 					logger.Errorf("B-Leg session error: %v", err)
 					return
