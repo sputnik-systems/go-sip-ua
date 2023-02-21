@@ -72,6 +72,7 @@ func NewProfile(
 	displayName string,
 	authInfo *AuthInfo,
 	expires uint32,
+	routes []sip.Uri,
 	stack *stack.SipStack,
 ) *Profile {
 	p := &Profile{
@@ -79,6 +80,7 @@ func NewProfile(
 		DisplayName: displayName,
 		AuthInfo:    authInfo,
 		Expires:     expires,
+		Routes:      routes,
 	}
 	if stack != nil { // populate the Contact field
 		var transport string

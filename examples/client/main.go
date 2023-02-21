@@ -104,6 +104,7 @@ func main() {
 			Realm:    "",
 		},
 		1800,
+		nil,
 		stack,
 	)
 
@@ -129,7 +130,7 @@ func main() {
 		logger.Error(err)
 	}
 
-	go ua.Invite(profile, called, recipient, &sdp, nil)
+	go ua.Invite(profile, called, recipient, &sdp, nil, nil)
 
 	<-stop
 
