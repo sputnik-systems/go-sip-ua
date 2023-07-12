@@ -70,6 +70,7 @@ func NewUserAgent(config *UserAgentConfig) *UserAgent {
 	stack.OnRequest(sip.BYE, ua.handleBye)
 	stack.OnRequest(sip.CANCEL, ua.handleCancel)
 	stack.OnRequest(sip.UPDATE, ua.handleUpdate)
+	stack.OnRequest(sip.OPTIONS, ua.handleOptions)
 	return ua
 }
 
@@ -415,6 +416,21 @@ func (ua *UserAgent) handleInvite(request sip.Request, tx sip.ServerTransaction)
 
 func (ua *UserAgent) handleUpdate(request sip.Request, tx sip.ServerTransaction) {
 	ua.Log().Debugf("handleUpdate: Request => %s", request.Short())
+
+	response := sip.NewResponseFromRequest(request.MessageID(), request, 200, "OK", "")
+	tx.Respond(response)
+}
+
+func (ua *UserAgent) handleOptions(request sip.Request, tx sip.ServerTransaction) {
+	ua.Log().Debugf("handleOptions => %s, body => %s", request.Short(), request.Body())
+
+	if to, ok := request.To(); ok {
+		if to.Params != nil && !to.Params.Has("tag") {
+			to.Params.Add("tag", sip.String{Str: util.RandString(8)})
+			request.RemoveHeader("To")
+			request.AppendHeader(to)
+		}
+	}
 
 	response := sip.NewResponseFromRequest(request.MessageID(), request, 200, "OK", "")
 	tx.Respond(response)
