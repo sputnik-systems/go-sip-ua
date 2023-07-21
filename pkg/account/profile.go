@@ -4,20 +4,10 @@ import (
 	"fmt"
 
 	"github.com/cloudwebrtc/go-sip-ua/pkg/stack"
-	"github.com/cloudwebrtc/go-sip-ua/pkg/utils"
-	"github.com/ghettovoice/gosip/log"
 	"github.com/ghettovoice/gosip/sip"
 	"github.com/ghettovoice/gosip/sip/parser"
 	"github.com/google/uuid"
 )
-
-var (
-	logger log.Logger
-)
-
-func init() {
-	logger = utils.NewLogrusLogger(log.DebugLevel, "UserAgent", nil)
-}
 
 //AuthInfo .
 type AuthInfo struct {
@@ -74,7 +64,7 @@ func NewProfile(
 	expires uint32,
 	routes []sip.Uri,
 	stack *stack.SipStack,
-) *Profile {
+) (*Profile, error) {
 	p := &Profile{
 		URI:         uri,
 		DisplayName: displayName,
@@ -94,16 +84,16 @@ func NewProfile(
 		if err == nil {
 			p.ContactURI = uri
 		} else {
-			logger.Errorf("Error parsing contact URI: %s", err)
+			return nil, fmt.Errorf("error parsing contact URI: %w", err)
 		}
 	}
 
 	uid, err := uuid.NewUUID()
 	if err != nil {
-		logger.Errorf("could not create UUID: %v", err)
+		return nil, fmt.Errorf("could not create UUID: %w", err)
 	}
 	p.InstanceID = fmt.Sprintf(`"<%s>"`, uid.URN())
-	return p
+	return p, nil
 }
 
 //RegisterState .

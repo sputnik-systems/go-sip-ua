@@ -21,9 +21,8 @@ type RtpUDPStream struct {
 	logger   log.Logger
 }
 
-func NewRtpUDPStream(bind string, portMin, portMax int, callback func(pkt []byte, raddr net.Addr)) *RtpUDPStream {
-
-	logger := utils.NewLogrusLogger(log.DebugLevel, "Media", nil)
+func NewRtpUDPStream(bind string, portMin, portMax int, callback func(pkt []byte, raddr net.Addr), logger log.Logger) *RtpUDPStream {
+	logger = logger.WithPrefix("media")
 
 	lAddr := &net.UDPAddr{IP: net.ParseIP(bind), Port: 0}
 	var err error
@@ -60,7 +59,7 @@ func (r *RtpUDPStream) Close() {
 }
 
 func (r *RtpUDPStream) Send(pkt []byte, raddr *net.UDPAddr) (int, error) {
-	r.Log().Debugf("Send to %v, length %d", raddr.String(), len(pkt))
+	r.Log().Tracef("Send to %v, length %d", raddr.String(), len(pkt))
 	r.raddr = raddr
 	return r.conn.WriteToUDP(pkt, raddr)
 }

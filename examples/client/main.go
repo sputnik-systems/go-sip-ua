@@ -20,22 +20,16 @@ import (
 )
 
 var (
-	logger log.Logger
-	udp    *rtp.RtpUDPStream
+	udp *rtp.RtpUDPStream
 )
 
-func init() {
-	logger = utils.NewLogrusLogger(log.DebugLevel, "Client", nil)
-}
-
-func createUdp() *rtp.RtpUDPStream {
-
+func createUdp(logger log.Logger) *rtp.RtpUDPStream {
 	udp = rtp.NewRtpUDPStream("127.0.0.1", rtp.DefaultPortMin, rtp.DefaultPortMax, func(data []byte, raddr net.Addr) {
 		logger.Infof("Rtp recevied: %v, laddr %s : raddr %s", len(data), udp.LocalAddr().String(), raddr)
 		dest, _ := net.ResolveUDPAddr(raddr.Network(), raddr.String())
 		logger.Infof("Echo rtp to %v", raddr)
 		udp.Send(data, dest)
-	})
+	}, logger)
 
 	go udp.Read()
 
@@ -43,12 +37,16 @@ func createUdp() *rtp.RtpUDPStream {
 }
 
 func main() {
+	logger := utils.NewLogrusLogger(log.DebugLevel, "Client", nil)
+
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGTERM, syscall.SIGINT)
 	stack := stack.NewSipStack(&stack.SipStackConfig{
 		UserAgent:  "Go Sip Client/example-client",
 		Extensions: []string{"replaces", "outbound"},
-		Dns:        "8.8.8.8"})
+		Dns:        "8.8.8.8",
+		Logger:     logger,
+	})
 
 	listen := "0.0.0.0:5080"
 	logger.Infof("Listen => %s", listen)
@@ -67,6 +65,7 @@ func main() {
 
 	ua := ua.NewUserAgent(&ua.UserAgentConfig{
 		SipStack: stack,
+		Logger:   logger,
 	})
 
 	ua.InviteStateHandler = func(sess *session.Session, req *sip.Request, resp *sip.Response, state session.Status) {
@@ -74,7 +73,7 @@ func main() {
 
 		switch state {
 		case session.InviteReceived:
-			udp = createUdp()
+			udp = createUdp(logger)
 			udpLaddr := udp.LocalAddr()
 			sdp := mock.BuildLocalSdp(udpLaddr.IP.String(), udpLaddr.Port)
 			sess.ProvideAnswer(sdp)
@@ -97,7 +96,7 @@ func main() {
 		logger.Error(err)
 	}
 
-	profile := account.NewProfile(uri.Clone(), "goSIP/example-client",
+	profile, err := account.NewProfile(uri.Clone(), "goSIP/example-client",
 		&account.AuthInfo{
 			AuthUser: "100",
 			Password: "100",
@@ -107,6 +106,9 @@ func main() {
 		nil,
 		stack,
 	)
+	if err != nil {
+		logger.Error(err)
+	}
 
 	recipient, err := parser.ParseSipUri("sip:100@127.0.0.1:5081;transport=wss")
 	if err != nil {
@@ -116,7 +118,7 @@ func main() {
 	register, _ := ua.SendRegister(profile, recipient, profile.Expires, nil)
 	time.Sleep(time.Second * 3)
 
-	udp = createUdp()
+	udp = createUdp(logger)
 	udpLaddr := udp.LocalAddr()
 	sdp := mock.BuildLocalSdp(udpLaddr.IP.String(), udpLaddr.Port)
 

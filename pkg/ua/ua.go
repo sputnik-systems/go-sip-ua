@@ -38,6 +38,7 @@ func NewSessionKey(callID sip.CallID, fromTag, toTag sip.MaybeString) SessionKey
 // UserAgentConfig .
 type UserAgentConfig struct {
 	SipStack *stack.SipStack
+	Logger   log.Logger
 }
 
 //InviteSessionHandler .
@@ -62,7 +63,7 @@ func NewUserAgent(config *UserAgentConfig) *UserAgent {
 		iss:                  sync.Map{},
 		InviteStateHandler:   nil,
 		RegisterStateHandler: nil,
-		log:                  utils.NewLogrusLogger(log.DebugLevel, "UserAgent", nil),
+		log:                  config.Logger.WithPrefix("user_agent"),
 	}
 	stack := config.SipStack
 	stack.OnRequest(sip.INVITE, ua.handleInvite)

@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/cloudwebrtc/go-sip-ua/pkg/account"
-	"github.com/cloudwebrtc/go-sip-ua/pkg/media/rtp"
 	"github.com/cloudwebrtc/go-sip-ua/pkg/stack"
 	"github.com/cloudwebrtc/go-sip-ua/pkg/ua"
 	"github.com/cloudwebrtc/go-sip-ua/pkg/utils"
@@ -15,23 +14,17 @@ import (
 	"github.com/ghettovoice/gosip/sip/parser"
 )
 
-var (
-	logger log.Logger
-	udp    *rtp.RtpUDPStream
-)
-
-func init() {
-	logger = utils.NewLogrusLogger(log.DebugLevel, "Register", nil)
-}
-
 func main() {
+	logger := utils.NewLogrusLogger(log.DebugLevel, "Register", nil)
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGTERM, syscall.SIGINT)
 	stack := stack.NewSipStack(&stack.SipStackConfig{
 		UserAgent:  "Go Sip Client/example-register",
 		Extensions: []string{"replaces", "outbound"},
-		Dns:        "8.8.8.8"})
+		Dns:        "8.8.8.8",
+		Logger:     logger,
+	})
 
 	if err := stack.Listen("udp", "0.0.0.0:5066"); err != nil {
 		logger.Panic(err)
@@ -39,6 +32,7 @@ func main() {
 
 	ua := ua.NewUserAgent(&ua.UserAgentConfig{
 		SipStack: stack,
+		Logger:   logger,
 	})
 
 	ua.RegisterStateHandler = func(state account.RegisterState) {
@@ -50,7 +44,7 @@ func main() {
 		logger.Error(err)
 	}
 
-	profile := account.NewProfile(uri.Clone(), "goSIP",
+	profile, err := account.NewProfile(uri.Clone(), "goSIP",
 		&account.AuthInfo{
 			AuthUser: "100",
 			Password: "100",
@@ -60,6 +54,9 @@ func main() {
 		nil,
 		stack,
 	)
+	if err != nil {
+		logger.Fatal(err)
+	}
 
 	recipient, err := parser.ParseSipUri("sip:100@127.0.0.1;transport=udp") // this is the remote address
 	if err != nil {

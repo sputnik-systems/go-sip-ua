@@ -51,28 +51,24 @@ type B2BUA struct {
 	domains  []string
 	calls    []*B2BCall
 	rfc8599  *registry.RFC8599
-}
-
-var (
-	logger log.Logger
-)
-
-func init() {
-	logger = utils.NewLogrusLogger(log.InfoLevel, "B2BUA", nil)
+	logger   log.Logger
 }
 
 //NewB2BUA .
-func NewB2BUA(disableAuth bool) *B2BUA {
+func NewB2BUA(disableAuth bool, logger log.Logger) *B2BUA {
+	logger = logger.WithPrefix("b2bua")
+
 	b := &B2BUA{
 		registry: registry.Registry(registry.NewMemoryRegistry()),
 		accounts: make(map[string]string),
 		rfc8599:  registry.NewRFC8599(pushCallback),
+		logger:   logger,
 	}
 
 	var authenticator *auth.ServerAuthorizer = nil
 
 	if !disableAuth {
-		authenticator = auth.NewServerAuthorizer(b.requestCredential, "b2bua", false)
+		authenticator = auth.NewServerAuthorizer(b.requestCredential, "b2bua", false, logger)
 	}
 
 	stack := stack.NewSipStack(&stack.SipStackConfig{
@@ -83,6 +79,7 @@ func NewB2BUA(disableAuth bool) *B2BUA {
 			Authenticator:     authenticator,
 			RequiresChallenge: b.requiresChallenge,
 		},
+		Logger: logger,
 	})
 
 	stack.OnConnectionError(b.handleConnectionError)
@@ -106,8 +103,8 @@ func NewB2BUA(disableAuth bool) *B2BUA {
 	}
 
 	ua := ua.NewUserAgent(&ua.UserAgentConfig{
-
 		SipStack: stack,
+		Logger:   logger,
 	})
 
 	ua.InviteStateHandler = func(sess *session.Session, req *sip.Request, resp *sip.Response, state session.Status) {
@@ -129,7 +126,10 @@ func NewB2BUA(disableAuth bool) *B2BUA {
 
 				// Create a temporary profile. In the future, it will support reading profiles from files or data
 				// For example: use a specific ip or sip account as outbound trunk
-				profile := account.NewProfile(caller, displayName, nil, 0, nil, stack)
+				profile, err := account.NewProfile(caller, displayName, nil, 0, nil, stack)
+				if err != nil {
+					logger.Error(err)
+				}
 
 				recipient, err2 := parser.ParseSipUri("sip:" + called.User().String() + "@" + instance.Source + ";transport=" + instance.Transport)
 				if err2 != nil {
@@ -307,7 +307,7 @@ func (b *B2BUA) GetRFC8599() *registry.RFC8599 {
 
 func (b *B2BUA) requestCredential(username string) (string, string, error) {
 	if password, found := b.accounts[username]; found {
-		logger.Infof("Found user %s", username)
+		b.logger.Infof("Found user %s", username)
 		return password, "", nil
 	}
 	return "", "", fmt.Errorf("username [%s] not found", username)
@@ -325,12 +325,12 @@ func (b *B2BUA) handleRegister(request sip.Request, tx sip.ServerTransaction) {
 	reason := ""
 	if len(headers) > 0 && expires != sip.Expires(0) {
 		instance := registry.NewContactInstanceForRequest(request)
-		logger.Infof("Registered [%v] expires [%d] source %s", to, expires, request.Source())
+		b.logger.Infof("Registered [%v] expires [%d] source %s", to, expires, request.Source())
 		reason = "Registered"
 		b.registry.AddAor(aor, instance)
 		b.rfc8599.HandleContactInstance(aor, instance)
 	} else {
-		logger.Infof("Logged out [%v] expires [%d] ", to, expires)
+		b.logger.Infof("Logged out [%v] expires [%d] ", to, expires)
 		reason = "UnRegistered"
 		instance := registry.NewContactInstanceForRequest(request)
 		b.registry.RemoveContact(aor, instance)
@@ -345,7 +345,7 @@ func (b *B2BUA) handleRegister(request sip.Request, tx sip.ServerTransaction) {
 }
 
 func (b *B2BUA) handleConnectionError(connError *transport.ConnectionError) {
-	logger.Debugf("Handle Connection Lost: Source: %v, Dest: %v, Network: %v", connError.Source, connError.Dest, connError.Net)
+	b.logger.Debugf("Handle Connection Lost: Source: %v, Dest: %v, Network: %v", connError.Source, connError.Dest, connError.Net)
 	b.registry.HandleConnectionError(connError)
 }
 

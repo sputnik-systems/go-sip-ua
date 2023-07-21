@@ -50,6 +50,7 @@ type SipStackConfig struct {
 	MsgMapper         sip.MessageMapper
 	ServerAuthManager ServerAuthManager
 	UserAgent         string
+	Logger            log.Logger
 }
 
 // SipStack a golang SIP Stack
@@ -74,11 +75,14 @@ type SipStack struct {
 
 // NewSipStack creates new instance of SipStack.
 func NewSipStack(config *SipStackConfig) *SipStack {
+	var logger log.Logger
+
 	if config == nil {
 		config = &SipStackConfig{}
+		logger = utils.NewLogrusLogger(log.DebugLevel, "SipStack", nil)
+	} else {
+		logger = config.Logger.WithPrefix("stack")
 	}
-
-	logger := utils.NewLogrusLogger(log.DebugLevel, "SipStack", nil)
 
 	var host string
 	var ip net.IP
@@ -134,12 +138,12 @@ func NewSipStack(config *SipStackConfig) *SipStack {
 	}
 
 	s.log = logger
-	s.tp = transport.NewLayer(ip, dnsResolver, config.MsgMapper, utils.NewLogrusLogger(log.DebugLevel, "transport.Layer", nil))
+	s.tp = transport.NewLayer(ip, dnsResolver, config.MsgMapper, logger)
 	sipTp := &sipTransport{
 		tpl: s.tp,
 		s:   s,
 	}
-	s.tx = transaction.NewLayer(sipTp, utils.NewLogrusLogger(log.DebugLevel, "transaction.Layer", nil))
+	s.tx = transaction.NewLayer(sipTp, logger)
 
 	s.running.Set()
 	go s.serve()
