@@ -683,16 +683,29 @@ func (ua *UserAgent) RequestWithContext(ctx context.Context, request sip.Request
 				if ok {
 					fromTag := utils.GetFromTag(response)
 					toTag := utils.GetToTag(response)
+					var inviteSession *session.Session
+					var isSessionFound = false
+
 					if v, found := ua.iss.Load(NewSessionKey(*callID, fromTag, toTag)); found {
+						inviteSession = v.(*session.Session)
+						isSessionFound = true
+					} else if v, found := ua.iss.Load(NewSessionKey(*callID, fromTag, nil)); found {
+						inviteSession = v.(*session.Session)
+						isSessionFound = true
+						if toTag != nil {
+							ua.iss.Delete(NewSessionKey(*callID, fromTag, nil))
+							ua.iss.Store(NewSessionKey(*callID, fromTag, toTag), v)
+						}
+					}
+
+					if isSessionFound {
 						if request.IsInvite() {
-							is := v.(*session.Session)
-							is.SetState(session.Confirmed)
-							ua.handleInviteState(is, &request, &response, session.Confirmed, nil)
+							inviteSession.SetState(session.Confirmed)
+							ua.handleInviteState(inviteSession, &request, &response, session.Confirmed, nil)
 						} else if request.Method() == sip.BYE {
-							is := v.(*session.Session)
 							ua.iss.Delete(NewSessionKey(*callID, fromTag, toTag))
-							is.SetState(session.Terminated)
-							ua.handleInviteState(is, &request, &response, session.Terminated, nil)
+							inviteSession.SetState(session.Terminated)
+							ua.handleInviteState(inviteSession, &request, &response, session.Terminated, nil)
 						}
 					}
 				}
