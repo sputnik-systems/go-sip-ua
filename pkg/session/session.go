@@ -28,6 +28,7 @@ type Session struct {
 	localURI       sip.Address
 	remoteURI      sip.Address
 	remoteTarget   sip.Uri
+	recordRoutes   []sip.Header
 	logger         log.Logger
 }
 
@@ -69,6 +70,12 @@ func NewInviteSession(reqcb RequestCallback, uaType string,
 	}
 
 	s.request = req
+
+	// TODO: refactor ASAP
+	if rrHeaders := req.GetHeaders("Record-Route"); len(rrHeaders) > 0 {
+		s.recordRoutes = rrHeaders
+	}
+
 	return s
 }
 
@@ -403,6 +410,14 @@ func (s *Session) makeRequest(uaType string, method sip.RequestMethod, msgID sip
 		if len(inviteResponse.GetHeaders("Route")) > 0 {
 			sip.CopyHeaders("Route", inviteResponse, newRequest)
 		}
+
+		if len(s.recordRoutes) > 0 {
+			newRequest.RemoveHeader("Record-Route")
+			for i := range s.recordRoutes {
+				newRequest.AppendHeader(s.recordRoutes[i].Clone())
+			}
+		}
+
 		newRequest.SetDestination(inviteResponse.Destination())
 		newRequest.SetSource(inviteResponse.Source())
 		newRequest.SetRecipient(to.Address)
