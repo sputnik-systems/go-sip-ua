@@ -41,13 +41,13 @@ type UserAgentConfig struct {
 	Logger   log.Logger
 }
 
-//InviteSessionHandler .
+// InviteSessionHandler .
 type InviteSessionHandler func(s *session.Session, req *sip.Request, resp *sip.Response, status session.Status)
 
-//RegisterHandler .
+// RegisterHandler .
 type RegisterHandler func(regState account.RegisterState)
 
-//UserAgent .
+// UserAgent .
 type UserAgent struct {
 	InviteStateHandler   InviteSessionHandler
 	RegisterStateHandler RegisterHandler
@@ -56,7 +56,7 @@ type UserAgent struct {
 	log                  log.Logger
 }
 
-//NewUserAgent .
+// NewUserAgent .
 func NewUserAgent(config *UserAgentConfig) *UserAgent {
 	ua := &UserAgent{
 		config:               config,
@@ -363,7 +363,14 @@ func (ua *UserAgent) handleInvite(request sip.Request, tx sip.ServerTransaction)
 				response := sip.NewResponseFromRequest(request.MessageID(), request, sip.StatusCode(482), "Loop Detected", "")
 				tx.Respond(response)
 			} else {
-				contactHdr, _ := request.Contact()
+				contactHdr, ok := request.Contact()
+				if !ok {
+					contactHdr = &sip.ContactHeader{
+						DisplayName: sip.MaybeString(nil),
+						Address:     nil,
+						Params:      sip.Params(nil),
+					}
+				}
 				if toHdr, ok := request.To(); ok {
 					contactHdr.Address = toHdr.Address
 				} else {
