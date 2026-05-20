@@ -363,20 +363,15 @@ func (ua *UserAgent) handleInvite(request sip.Request, tx sip.ServerTransaction)
 				response := sip.NewResponseFromRequest(request.MessageID(), request, sip.StatusCode(482), "Loop Detected", "")
 				tx.Respond(response)
 			} else {
-				contactHdr, ok := request.Contact()
-				if !ok {
-					contactHdr = &sip.ContactHeader{
-						DisplayName: sip.MaybeString(nil),
-						Address:     nil,
-						Params:      sip.Params(nil),
-					}
+				if _, ok := request.From(); !ok {
+					response := sip.NewResponseFromRequest(request.MessageID(), request, sip.StatusCode(400), "Bad Request", "")
+					tx.Respond(response)
+					return
 				}
-				if toHdr, ok := request.To(); ok {
-					contactHdr.Address = toHdr.Address
-				} else {
-					contactAddr := ua.updateContact2UAAddr(request.Transport(), contactHdr.Address)
-					contactHdr.Address = contactAddr
-				}
+
+				contactHdr, _ := request.Contact()
+				contactAddr := ua.updateContact2UAAddr(request.Transport(), contactHdr.Address)
+				contactHdr.Address = contactAddr
 
 				is := session.NewInviteSession(ua.RequestWithContext, "UAS", contactHdr, request, *callID, transaction, session.Incoming, ua.Log())
 				if isToTag, ok := is.LocalURI().Params.Get("tag"); ok {
