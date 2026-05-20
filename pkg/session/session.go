@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/cloudwebrtc/go-sip-ua/pkg/utils"
 	"github.com/ghettovoice/gosip/log"
 	"github.com/ghettovoice/gosip/sip"
 	"github.com/ghettovoice/gosip/util"
@@ -46,7 +45,7 @@ func NewInviteSession(reqcb RequestCallback, uaType string,
 		contact:        contact,
 	}
 
-	s.logger = utils.NewLogrusLogger(log.DebugLevel, "Session", nil)
+	s.logger = logger.WithPrefix("session")
 
 	to, _ := req.To()
 	from, _ := req.From()
@@ -95,6 +94,10 @@ func (s *Session) LocalURI() sip.Address {
 
 func (s *Session) RemoteURI() sip.Address {
 	return s.remoteURI
+}
+
+func (s *Session) UAType() string {
+	return s.uaType
 }
 
 func (s *Session) LocalSdp() string {

@@ -146,7 +146,9 @@ func main() {
 		http.ListenAndServe(":6658", nil)
 	}()
 
-	b2bua := b2bua.NewB2BUA(disableAuth)
+	logger := utils.NewLogrusLogger(log.InfoLevel, "", nil)
+
+	b2bua := b2bua.NewB2BUA(disableAuth, logger)
 
 	// Add sample accounts.
 	b2bua.AddAccount("100", "100")

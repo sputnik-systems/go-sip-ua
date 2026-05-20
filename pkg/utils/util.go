@@ -26,6 +26,26 @@ func GetBranchID(msg sip.Message) sip.MaybeString {
 	return nil
 }
 
+func GetFromTag(msg sip.Message) sip.MaybeString {
+	if fromHdr, ok := msg.From(); ok && fromHdr.Params != nil {
+		if tag, ok := fromHdr.Params.Get("tag"); ok {
+			return tag
+		}
+	}
+
+	return nil
+}
+
+func GetToTag(msg sip.Message) sip.MaybeString {
+	if toHdr, ok := msg.To(); ok && toHdr.Params != nil {
+		if tag, ok := toHdr.Params.Get("tag"); ok {
+			return tag
+		}
+	}
+
+	return nil
+}
+
 func GetIP(addr string) string {
 	if strings.Contains(addr, ":") {
 		return strings.Split(addr, ":")[0]

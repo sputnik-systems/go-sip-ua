@@ -9,17 +9,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cloudwebrtc/go-sip-ua/pkg/utils"
 	"github.com/ghettovoice/gosip/log"
 	"github.com/ghettovoice/gosip/sip"
 )
 
 const (
 	NonceExpire = 180 * time.Second
-)
-
-var (
-	logger log.Logger
 )
 
 // AuthSession .
@@ -43,14 +38,14 @@ type ServerAuthorizer struct {
 }
 
 // NewServerAuthorizer .
-func NewServerAuthorizer(callback RequestCredentialCallback, realm string, authInt bool) *ServerAuthorizer {
+func NewServerAuthorizer(callback RequestCredentialCallback, realm string, authInt bool, logger log.Logger) *ServerAuthorizer {
 	auth := &ServerAuthorizer{
 		sessions:          make(map[string]AuthSession),
 		requestCredential: callback,
 		useAuthInt:        authInt,
 		realm:             realm,
 	}
-	auth.log = utils.NewLogrusLogger(log.DebugLevel, "ServerAuthorizer", nil)
+	auth.log = logger.WithPrefix("server_authorizer")
 	go func() {
 		for now := range time.Tick(NonceExpire) {
 			auth.mx.Lock()

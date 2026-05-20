@@ -21,30 +21,33 @@ import (
 
 // SessionKey - Session Key for Session Storage
 type SessionKey struct {
-	CallID   sip.CallID
-	BranchID sip.MaybeString
+	CallID  sip.CallID
+	FromTag sip.MaybeString
+	ToTag   sip.MaybeString
 }
 
 // NewSessionKey - Build a Session Key quickly
-func NewSessionKey(callID sip.CallID, branchID sip.MaybeString) SessionKey {
+func NewSessionKey(callID sip.CallID, fromTag, toTag sip.MaybeString) SessionKey {
 	return SessionKey{
-		CallID:   callID,
-		BranchID: branchID,
+		CallID:  callID,
+		FromTag: fromTag,
+		ToTag:   toTag,
 	}
 }
 
 // UserAgentConfig .
 type UserAgentConfig struct {
 	SipStack *stack.SipStack
+	Logger   log.Logger
 }
 
-//InviteSessionHandler .
+// InviteSessionHandler .
 type InviteSessionHandler func(s *session.Session, req *sip.Request, resp *sip.Response, status session.Status)
 
-//RegisterHandler .
+// RegisterHandler .
 type RegisterHandler func(regState account.RegisterState)
 
-//UserAgent .
+// UserAgent .
 type UserAgent struct {
 	InviteStateHandler   InviteSessionHandler
 	RegisterStateHandler RegisterHandler
@@ -53,14 +56,14 @@ type UserAgent struct {
 	log                  log.Logger
 }
 
-//NewUserAgent .
+// NewUserAgent .
 func NewUserAgent(config *UserAgentConfig) *UserAgent {
 	ua := &UserAgent{
 		config:               config,
 		iss:                  sync.Map{},
 		InviteStateHandler:   nil,
 		RegisterStateHandler: nil,
-		log:                  utils.NewLogrusLogger(log.DebugLevel, "UserAgent", nil),
+		log:                  config.Logger.WithPrefix("user_agent"),
 	}
 	stack := config.SipStack
 	stack.OnRequest(sip.INVITE, ua.handleInvite)
@@ -68,11 +71,23 @@ func NewUserAgent(config *UserAgentConfig) *UserAgent {
 	stack.OnRequest(sip.BYE, ua.handleBye)
 	stack.OnRequest(sip.CANCEL, ua.handleCancel)
 	stack.OnRequest(sip.UPDATE, ua.handleUpdate)
+	stack.OnRequest(sip.OPTIONS, ua.handleOptions)
 	return ua
 }
 
 func (ua *UserAgent) Log() log.Logger {
 	return ua.log
+}
+
+func (ua *UserAgent) GetInviteSessionsCount() int {
+	length := 0
+	ua.iss.Range(func(key, value any) bool {
+		length++
+
+		return true
+	})
+
+	return length
 }
 
 func (ua *UserAgent) handleInviteState(is *session.Session, request *sip.Request, response *sip.Response, state session.Status, tx *sip.Transaction) {
@@ -102,9 +117,22 @@ func (ua *UserAgent) buildRequest(
 	contact *sip.Address,
 	recipient sip.SipUri,
 	routes []sip.Uri,
-	callID *sip.CallID) (*sip.Request, error) {
+	callID *sip.CallID,
+	customHeaders []sip.Header) (*sip.Request, error) {
 
 	builder := sip.NewRequestBuilder()
+	builder.AddVia(&sip.ViaHop{
+		ProtocolName:    "SIP",
+		ProtocolVersion: "2.0",
+		Transport:       "UDP",
+		Host:            from.Uri.Host(),
+		Port:            nil,
+		Params:          sip.NewParams().Add("rport", nil),
+	})
+
+	for _, header := range customHeaders {
+		builder.AddHeader(header)
+	}
 
 	builder.SetMethod(method)
 	builder.SetFrom(from)
@@ -140,12 +168,11 @@ func (ua *UserAgent) SendRegister(profile *account.Profile, recipient sip.SipUri
 	return register, nil
 }
 
-func (ua *UserAgent) Invite(profile *account.Profile, target sip.Uri, recipient sip.SipUri, body *string) (*session.Session, error) {
-	return ua.InviteWithContext(context.TODO(), profile, target, recipient, body)
+func (ua *UserAgent) Invite(profile *account.Profile, target sip.Uri, recipient sip.SipUri, body *string, callID *sip.CallID, headers []sip.Header) (*session.Session, error) {
+	return ua.InviteWithContext(context.TODO(), profile, target, recipient, body, callID, headers)
 }
 
-func (ua *UserAgent) InviteWithContext(ctx context.Context, profile *account.Profile, target sip.Uri, recipient sip.SipUri, body *string) (*session.Session, error) {
-
+func (ua *UserAgent) InviteWithContext(ctx context.Context, profile *account.Profile, target sip.Uri, recipient sip.SipUri, body *string, callID *sip.CallID, headers []sip.Header) (*session.Session, error) {
 	from := &sip.Address{
 		DisplayName: sip.String{Str: profile.DisplayName},
 		Uri:         profile.URI,
@@ -158,7 +185,7 @@ func (ua *UserAgent) InviteWithContext(ctx context.Context, profile *account.Pro
 		Uri: target,
 	}
 
-	request, err := ua.buildRequest(sip.INVITE, from, to, contact, recipient, profile.Routes, nil)
+	request, err := ua.buildRequest(sip.INVITE, from, to, contact, recipient, profile.Routes, callID, headers)
 	if err != nil {
 		ua.Log().Errorf("INVITE: err = %v", err)
 		return nil, err
@@ -189,8 +216,9 @@ func (ua *UserAgent) InviteWithContext(ctx context.Context, profile *account.Pro
 
 	callID, ok := (*request).CallID()
 	if ok {
-		branchID := utils.GetBranchID(*request)
-		if v, found := ua.iss.Load(NewSessionKey(*callID, branchID)); found {
+		fromTag := utils.GetFromTag(*request)
+		toTag := utils.GetToTag(*request)
+		if v, found := ua.iss.Load(NewSessionKey(*callID, fromTag, toTag)); found {
 			return v.(*session.Session), nil
 		}
 	}
@@ -234,41 +262,72 @@ func (ua *UserAgent) handleBye(request sip.Request, tx sip.ServerTransaction) {
 	tx.Respond(response)
 	callID, ok := request.CallID()
 	if ok {
-		branchID := utils.GetBranchID(request)
-		if v, found := ua.iss.Load(NewSessionKey(*callID, branchID)); found {
-			is := v.(*session.Session)
-			ua.iss.Delete(NewSessionKey(*callID, branchID))
+		isUACCase := false
+
+		// UAC case (UAS send BYE).
+		// Here fromTag in request is UAS-tag and toTag from request - UAC-tag.
+		// Since UAC initialized invite session, in iss it stored with UAC-tag as fromTag and UAS-tag as toTag.
+		uasTag := utils.GetFromTag(request)
+		uacTag := utils.GetToTag(request)
+		if v, found := ua.iss.Load(NewSessionKey(*callID, uacTag, uasTag)); found {
+			inviteSession := v.(*session.Session)
+			ua.iss.Delete(NewSessionKey(*callID, uacTag, uasTag))
 			var transaction sip.Transaction = tx.(sip.Transaction)
-			ua.handleInviteState(is, &request, &response, session.Terminated, &transaction)
+			ua.handleInviteState(inviteSession, &request, &response, session.Terminated, &transaction)
+
+			isUACCase = true
+		}
+
+		// UAS case (UAC send BYE)
+		fromTag := utils.GetFromTag(request)
+		toTag := utils.GetToTag(request)
+		if v, found := ua.iss.Load(NewSessionKey(*callID, fromTag, toTag)); !isUACCase && found {
+			inviteSession := v.(*session.Session)
+			ua.iss.Delete(NewSessionKey(*callID, fromTag, toTag))
+			var transaction sip.Transaction = tx.(sip.Transaction)
+			ua.handleInviteState(inviteSession, &request, &response, session.Terminated, &transaction)
 		}
 	}
 }
 
 func (ua *UserAgent) handleCancel(request sip.Request, tx sip.ServerTransaction) {
-
 	ua.Log().Debugf("handleCancel: Request => %s, body => %s", request.Short(), request.Body())
 	response := sip.NewResponseFromRequest(request.MessageID(), request, 200, "OK", "")
 	tx.Respond(response)
 
 	callID, ok := request.CallID()
 	if ok {
-		branchID := utils.GetBranchID(request)
-		if v, found := ua.iss.Load(NewSessionKey(*callID, branchID)); found {
-			is := v.(*session.Session)
-			ua.iss.Delete(NewSessionKey(*callID, branchID))
+		fromTag := utils.GetFromTag(request)
+		toTag := utils.GetToTag(request)
+		var inviteSession *session.Session
+		var isSessionFound = false
+
+		if v, found := ua.iss.Load(NewSessionKey(*callID, fromTag, toTag)); found {
+			inviteSession = v.(*session.Session)
+			isSessionFound = true
+		} else if v, found := ua.iss.Load(NewSessionKey(*callID, fromTag, nil)); found {
+			inviteSession = v.(*session.Session)
+			isSessionFound = true
+			toTag = nil
+		}
+
+		if isSessionFound {
+			ua.iss.Delete(NewSessionKey(*callID, fromTag, toTag))
 			var transaction sip.Transaction = tx.(sip.Transaction)
-			is.SetState(session.Canceled)
-			ua.handleInviteState(is, &request, nil, session.Canceled, &transaction)
+			inviteSession.SetState(session.Canceled)
+			ua.handleInviteState(inviteSession, &request, nil, session.Canceled, &transaction)
 		}
 	}
 }
 
 func (ua *UserAgent) handleACK(request sip.Request, tx sip.ServerTransaction) {
 	ua.Log().Debugf("handleACK => %s, body => %s", request.Short(), request.Body())
+
 	callID, ok := request.CallID()
 	if ok {
-		branchID := utils.GetBranchID(request)
-		if v, found := ua.iss.Load(NewSessionKey(*callID, branchID)); found {
+		fromTag := utils.GetFromTag(request)
+		toTag := utils.GetToTag(request)
+		if v, found := ua.iss.Load(NewSessionKey(*callID, fromTag, toTag)); found {
 			// handle Ringing or Processing with sdp
 			is := v.(*session.Session)
 			is.SetState(session.Confirmed)
@@ -278,16 +337,18 @@ func (ua *UserAgent) handleACK(request sip.Request, tx sip.ServerTransaction) {
 }
 
 func (ua *UserAgent) handleInvite(request sip.Request, tx sip.ServerTransaction) {
-
 	ua.Log().Debugf("handleInvite => %s, body => %s", request.Short(), request.Body())
 
 	callID, ok := request.CallID()
+	var localTag sip.MaybeString = nil
 	if ok {
 		var transaction sip.Transaction = tx.(sip.Transaction)
-		branchID := utils.GetBranchID(request)
-		v, found := ua.iss.Load(NewSessionKey(*callID, branchID))
+		fromTag := utils.GetFromTag(request)
+		toTag := utils.GetToTag(request)
+		v, found := ua.iss.Load(NewSessionKey(*callID, fromTag, toTag))
 		if toHdr, ok := request.To(); ok && toHdr.Params.Has("tag") {
 			if found {
+				localTag = toTag
 				is := v.(*session.Session)
 				is.SetState(session.ReInviteReceived)
 				ua.handleInviteState(is, &request, nil, session.ReInviteReceived, &transaction)
@@ -313,7 +374,11 @@ func (ua *UserAgent) handleInvite(request sip.Request, tx sip.ServerTransaction)
 				contactHdr.Address = contactAddr
 
 				is := session.NewInviteSession(ua.RequestWithContext, "UAS", contactHdr, request, *callID, transaction, session.Incoming, ua.Log())
-				ua.iss.Store(NewSessionKey(*callID, branchID), is)
+				if isToTag, ok := is.LocalURI().Params.Get("tag"); ok {
+					toTag = isToTag
+					localTag = toTag
+				}
+				ua.iss.Store(NewSessionKey(*callID, fromTag, toTag), is)
 				is.SetState(session.InviteReceived)
 				ua.handleInviteState(is, &request, nil, session.InviteReceived, &transaction)
 				is.SetState(session.WaitingForAnswer)
@@ -327,9 +392,13 @@ func (ua *UserAgent) handleInvite(request sip.Request, tx sip.ServerTransaction)
 			ua.Log().Debugf("Cancel => %s, body => %s", cancel.Short(), cancel.Body())
 			response := sip.NewResponseFromRequest(cancel.MessageID(), cancel, 200, "OK", "")
 			if callID, ok := response.CallID(); ok {
-				branchID := utils.GetBranchID(cancel)
-				if v, found := ua.iss.Load(NewSessionKey(*callID, branchID)); found {
-					ua.iss.Delete(NewSessionKey(*callID, branchID))
+				fromTag := utils.GetFromTag(cancel)
+
+				// Since invite session saved with valid fromTag and toTag and CANCEL contains only fromTag, extract toTag from created invite session.
+				toTag := localTag
+
+				if v, found := ua.iss.Load(NewSessionKey(*callID, fromTag, toTag)); found {
+					ua.iss.Delete(NewSessionKey(*callID, fromTag, toTag))
 					is := v.(*session.Session)
 					is.SetState(session.Canceled)
 					ua.handleInviteState(is, &request, &response, session.Canceled, nil)
@@ -350,6 +419,22 @@ func (ua *UserAgent) handleInvite(request sip.Request, tx sip.ServerTransaction)
 
 func (ua *UserAgent) handleUpdate(request sip.Request, tx sip.ServerTransaction) {
 	ua.Log().Debugf("handleUpdate: Request => %s", request.Short())
+
+	response := sip.NewResponseFromRequest(request.MessageID(), request, 200, "OK", "")
+	tx.Respond(response)
+}
+
+func (ua *UserAgent) handleOptions(request sip.Request, tx sip.ServerTransaction) {
+	ua.Log().Debugf("handleOptions => %s, body => %s", request.Short(), request.Body())
+
+	if to, ok := request.To(); ok {
+		if to.Params != nil && !to.Params.Has("tag") {
+			to.Params.Add("tag", sip.String{Str: util.RandString(8)})
+			request.RemoveHeader("To")
+			request.AppendHeader(to)
+		}
+	}
+
 	response := sip.NewResponseFromRequest(request.MessageID(), request, 200, "OK", "")
 	tx.Respond(response)
 }
@@ -365,13 +450,14 @@ func (ua *UserAgent) RequestWithContext(ctx context.Context, request sip.Request
 
 	if request.IsInvite() {
 		if callID, ok := request.CallID(); ok {
-			branchID := utils.GetBranchID(request)
-			if _, found := ua.iss.Load(NewSessionKey(*callID, branchID)); !found {
+			fromTag := utils.GetFromTag(request)
+			toTag := utils.GetToTag(request)
+			if _, found := ua.iss.Load(NewSessionKey(*callID, fromTag, toTag)); !found {
 				contactHdr, _ := request.Contact()
 				contactAddr := ua.updateContact2UAAddr(request.Transport(), contactHdr.Address)
 				contactHdr.Address = contactAddr
 				is := session.NewInviteSession(ua.RequestWithContext, "UAC", contactHdr, request, *callID, cts, session.Outgoing, ua.Log())
-				ua.iss.Store(NewSessionKey(*callID, branchID), is)
+				ua.iss.Store(NewSessionKey(*callID, fromTag, toTag), is)
 				is.ProvideOffer(request.Body())
 				is.SetState(session.InviteSent)
 				ua.handleInviteState(is, &request, nil, session.InviteSent, &cts)
@@ -467,9 +553,40 @@ func (ua *UserAgent) RequestWithContext(ctx context.Context, request sip.Request
 					return
 				}
 
-				// unauth request
+				// auth request
 				needAuth := (response.StatusCode() == 401 || response.StatusCode() == 407) && attempt < 2
 				if needAuth && authorizer != nil {
+
+					// Since the first time we send request with local contact URI, we should extract
+					// valid (public) host&port from Via response header parameters:
+					// host key	= "received"
+					// port key = "rport"
+					//
+					// Also we should update profile.ContactURI.
+					if viaHeader, ok := response.Via(); ok {
+						if len(viaHeader) > 0 {
+							viaHeaderParams := viaHeader[0].Params
+
+							contactHeader, _ := request.Contact()
+
+							if receivedIPAddress, ok := viaHeaderParams.Get("received"); ok {
+								contactHeader.Address.SetHost(receivedIPAddress.String())
+							}
+
+							if rport, ok := viaHeaderParams.Get("rport"); ok {
+								uintRPort, err := strconv.ParseUint(rport.String(), 10, 16)
+
+								// rport parsed successfully.
+								if err == nil {
+									var port = sip.Port(uint16(uintRPort))
+									contactHeader.Address.SetPort(&port)
+								}
+							}
+
+							request.ReplaceHeaders("Contact", []sip.Header{contactHeader})
+						}
+					}
+
 					if err := authorizer.AuthorizeRequest(request, response); err != nil {
 						errs <- err
 						return
@@ -498,15 +615,30 @@ func (ua *UserAgent) RequestWithContext(ctx context.Context, request sip.Request
 			case provisional := <-provisionals:
 				callID, ok := provisional.CallID()
 				if ok {
-					branchID := utils.GetBranchID(provisional)
-					if v, found := ua.iss.Load(NewSessionKey(*callID, branchID)); found {
-						is := v.(*session.Session)
-						is.StoreResponse(provisional)
+					fromTag := utils.GetFromTag(provisional)
+					toTag := utils.GetToTag(provisional)
+					var inviteSession *session.Session
+					var isSessionFound = false
+
+					if v, found := ua.iss.Load(NewSessionKey(*callID, fromTag, toTag)); found {
+						inviteSession = v.(*session.Session)
+						isSessionFound = true
+					} else if v, found := ua.iss.Load(NewSessionKey(*callID, fromTag, nil)); found {
+						inviteSession = v.(*session.Session)
+						isSessionFound = true
+						if toTag != nil {
+							ua.iss.Delete(NewSessionKey(*callID, fromTag, nil))
+							ua.iss.Store(NewSessionKey(*callID, fromTag, toTag), v)
+						}
+					}
+
+					if isSessionFound {
+						inviteSession.StoreResponse(provisional)
 						// handle Ringing or Processing with sdp
-						ua.handleInviteState(is, &request, &provisional, session.Provisional, cts)
+						ua.handleInviteState(inviteSession, &request, &provisional, session.Provisional, cts)
 						if len(provisional.Body()) > 0 {
-							is.SetState(session.EarlyMedia)
-							ua.handleInviteState(is, &request, &provisional, session.EarlyMedia, cts)
+							inviteSession.SetState(session.EarlyMedia)
+							ua.handleInviteState(inviteSession, &request, &provisional, session.EarlyMedia, cts)
 						}
 					}
 				}
@@ -521,12 +653,27 @@ func (ua *UserAgent) RequestWithContext(ctx context.Context, request sip.Request
 					response := (err.(*sip.RequestError)).Response
 					callID, ok := request.CallID()
 					if ok {
-						branchID := utils.GetBranchID(request)
-						if v, found := ua.iss.Load(NewSessionKey(*callID, branchID)); found {
-							is := v.(*session.Session)
-							ua.iss.Delete(NewSessionKey(*callID, branchID))
-							is.SetState(session.Failure)
-							ua.handleInviteState(is, &request, &response, session.Failure, nil)
+						fromTag := utils.GetFromTag(request)
+						toTag := utils.GetToTag(request)
+						if response != nil {
+							toTag = utils.GetToTag(response)
+						}
+						var inviteSession *session.Session
+						var isSessionFound = false
+
+						if v, found := ua.iss.Load(NewSessionKey(*callID, fromTag, toTag)); found {
+							inviteSession = v.(*session.Session)
+							isSessionFound = true
+						} else if v, found := ua.iss.Load(NewSessionKey(*callID, fromTag, nil)); found {
+							inviteSession = v.(*session.Session)
+							isSessionFound = true
+							toTag = nil
+						}
+
+						if isSessionFound {
+							ua.iss.Delete(NewSessionKey(*callID, fromTag, toTag))
+							inviteSession.SetState(session.Failure)
+							ua.handleInviteState(inviteSession, &request, &response, session.Failure, nil)
 						}
 					}
 					return nil, err
@@ -536,17 +683,31 @@ func (ua *UserAgent) RequestWithContext(ctx context.Context, request sip.Request
 			case response := <-responses:
 				callID, ok := response.CallID()
 				if ok {
-					branchID := utils.GetBranchID(response)
-					if v, found := ua.iss.Load(NewSessionKey(*callID, branchID)); found {
+					fromTag := utils.GetFromTag(response)
+					toTag := utils.GetToTag(response)
+					var inviteSession *session.Session
+					var isSessionFound = false
+
+					if v, found := ua.iss.Load(NewSessionKey(*callID, fromTag, toTag)); found {
+						inviteSession = v.(*session.Session)
+						isSessionFound = true
+					} else if v, found := ua.iss.Load(NewSessionKey(*callID, fromTag, nil)); found {
+						inviteSession = v.(*session.Session)
+						isSessionFound = true
+						if toTag != nil {
+							ua.iss.Delete(NewSessionKey(*callID, fromTag, nil))
+							ua.iss.Store(NewSessionKey(*callID, fromTag, toTag), v)
+						}
+					}
+
+					if isSessionFound {
 						if request.IsInvite() {
-							is := v.(*session.Session)
-							is.SetState(session.Confirmed)
-							ua.handleInviteState(is, &request, &response, session.Confirmed, nil)
+							inviteSession.SetState(session.Confirmed)
+							ua.handleInviteState(inviteSession, &request, &response, session.Confirmed, nil)
 						} else if request.Method() == sip.BYE {
-							is := v.(*session.Session)
-							ua.iss.Delete(NewSessionKey(*callID, branchID))
-							is.SetState(session.Terminated)
-							ua.handleInviteState(is, &request, &response, session.Terminated, nil)
+							ua.iss.Delete(NewSessionKey(*callID, fromTag, toTag))
+							inviteSession.SetState(session.Terminated)
+							ua.handleInviteState(inviteSession, &request, &response, session.Terminated, nil)
 						}
 					}
 				}
