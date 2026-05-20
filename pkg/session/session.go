@@ -58,13 +58,21 @@ func NewInviteSession(reqcb RequestCallback, uaType string,
 	}
 
 	if uaType == "UAS" {
-		s.localURI = sip.Address{Uri: to.Address, Params: to.Params}
-		s.remoteURI = sip.Address{Uri: from.Address, Params: from.Params}
+		if to != nil {
+			s.localURI = sip.Address{Uri: to.Address, Params: to.Params}
+		}
+		if from != nil {
+			s.remoteURI = sip.Address{Uri: from.Address, Params: from.Params}
+		}
 		s.remoteTarget = contact.Address
 		s.offer = req.Body()
 	} else if uaType == "UAC" {
-		s.localURI = sip.Address{Uri: from.Address, Params: from.Params}
-		s.remoteURI = sip.Address{Uri: to.Address, Params: to.Params}
+		if from != nil {
+			s.localURI = sip.Address{Uri: from.Address, Params: from.Params}
+		}
+		if to != nil {
+			s.remoteURI = sip.Address{Uri: to.Address, Params: to.Params}
+		}
 		s.remoteTarget = req.Recipient()
 		s.offer = req.Body()
 	}

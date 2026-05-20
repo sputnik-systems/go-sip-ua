@@ -302,6 +302,12 @@ func (ua *UserAgent) handleInvite(request sip.Request, tx sip.ServerTransaction)
 				response := sip.NewResponseFromRequest(request.MessageID(), request, sip.StatusCode(482), "Loop Detected", "")
 				tx.Respond(response)
 			} else {
+				if _, ok := request.From(); !ok {
+					response := sip.NewResponseFromRequest(request.MessageID(), request, sip.StatusCode(400), "Bad Request", "")
+					tx.Respond(response)
+					return
+				}
+
 				contactHdr, _ := request.Contact()
 				contactAddr := ua.updateContact2UAAddr(request.Transport(), contactHdr.Address)
 				contactHdr.Address = contactAddr
